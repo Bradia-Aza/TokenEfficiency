@@ -1,0 +1,21 @@
+{
+  "id": "msg_02ToolCalls",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5",
+  "content": [
+    { "type": "text", "text": "Reading both files." },
+    { "type": "tool_use", "id": "toolu_01A", "name": "read_file", "input": { "path": "index.js" } },
+    { "type": "tool_use", "id": "toolu_01B", "name": "read_file", "input": { "path": "config/index.js" } }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 1204,
+    "cache_creation_input_tokens": 812,
+    "cache_read_input_tokens": 20480,
+    "output_tokens": 96,
+    "cache_creation": { "ephemeral_5m_input_tokens": 812, "ephemeral_1h_input_tokens": 0 },
+    "service_tier": "standard"
+  }
+}

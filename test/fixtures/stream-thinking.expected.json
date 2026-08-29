@@ -1,0 +1,23 @@
+{
+  "id": "msg_03StreamThinking",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Check each block type, then each direction.",
+      "signature": "ErUBCkYIBBgCIkDdT1n8"
+    },
+    { "type": "redacted_thinking", "data": "EroBCkYIBBgCIkAdQm9ndXM=" },
+    { "type": "text", "text": "It holds." }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 512,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 4096,
+    "output_tokens": 320
+  }
+}

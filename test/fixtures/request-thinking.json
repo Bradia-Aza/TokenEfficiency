@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-5",
+  "max_tokens": 16000,
+  "thinking": { "type": "enabled", "budget_tokens": 10000 },
+  "tool_choice": { "type": "tool", "name": "read_file", "disable_parallel_tool_use": true },
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a file from disk.",
+      "input_schema": { "type": "object", "properties": { "path": { "type": "string" } } }
+    }
+  ],
+  "messages": [
+    { "role": "user", "content": "Prove the round-trip is lossless." },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Enumerate the block types, then check each direction.",
+          "signature": "ErUBCkYIBBgCIkDdT1n8"
+        },
+        { "type": "redacted_thinking", "data": "EroBCkYIBBgCIkAdQm9ndXM=" },
+        { "type": "text", "text": "Here is the argument." }
+      ]
+    },
+    { "role": "user", "content": "Continue." }
+  ]
+}

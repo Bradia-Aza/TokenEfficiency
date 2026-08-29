@@ -1,0 +1,15 @@
+{
+  "id": "msg_01StreamText",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5",
+  "content": [{ "type": "text", "text": "Hello, world." }],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 42,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 128,
+    "output_tokens": 7
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "token-efficiency-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider-agnostic LLM gateway proxy for the token efficiency platform",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  }
+}

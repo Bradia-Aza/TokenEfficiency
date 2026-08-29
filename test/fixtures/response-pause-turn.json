@@ -1,0 +1,17 @@
+{
+  "id": "msg_06PauseTurn",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5",
+  "content": [
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_02",
+      "name": "web_search",
+      "input": { "query": "token efficiency gateway" }
+    }
+  ],
+  "stop_reason": "pause_turn",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 140, "output_tokens": 44 }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "msg_04Truncated",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5",
+  "content": [{ "type": "text", "text": "The first step is to enumerate every" }],
+  "stop_reason": "max_tokens",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 30, "output_tokens": 8 }
+}

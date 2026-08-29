@@ -1,0 +1,68 @@
+{
+  "model": "claude-opus-5",
+  "max_tokens": 4096,
+  "output_format": {
+    "type": "json_schema",
+    "schema": {
+      "type": "object",
+      "properties": { "summary": { "type": "string" } },
+      "required": ["summary"]
+    }
+  },
+  "system": [
+    {
+      "type": "text",
+      "text": "Answer in JSON.",
+      "cache_control": { "type": "ephemeral", "ttl": "1h" }
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "Read a file from disk.",
+      "input_schema": { "type": "object", "properties": { "path": { "type": "string" } } },
+      "cache_control": { "type": "ephemeral", "ttl": "5m" }
+    },
+    { "type": "code_execution_20250522", "name": "code_execution" }
+  ],
+  "tool_choice": { "type": "any" },
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "document",
+          "source": { "type": "file", "file_id": "file_011CQx" },
+          "title": "spec"
+        },
+        { "type": "text", "text": "Summarize the spec." }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_03",
+          "name": "code_execution",
+          "input": { "code": "1+1" }
+        },
+        {
+          "type": "code_execution_tool_result",
+          "tool_use_id": "srvtoolu_03",
+          "content": { "type": "code_execution_result", "stdout": "2\n", "return_code": 0 }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_missing",
+          "content": [{ "type": "text", "text": "no matching call in this request" }]
+        }
+      ]
+    }
+  ]
+}
