@@ -1,10 +1,9 @@
 // routing/ is a lookup, so this tests a lookup: entries in, a route out.
 //
-// No second adapter is stood up here. The entries below carry opaque sentinel
-// objects where an adapter goes, because the router never calls one — it only
-// hands one back. The registry gets its real exercise when a second adapter
-// actually exists; until then, inventing one to "prove" multi-provider routing
-// would prove something about the fake rather than about the code.
+// Most cases below use opaque sentinel objects where an adapter goes, because
+// the router never calls one — it only hands one back. The shipped registry
+// (config/providers.js), with its real Anthropic and OpenAI entries, gets its
+// own exercise at the bottom of this file.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -121,13 +120,24 @@ test('a malformed registry fails at startup, not per request', () => {
 // config/providers.js — the registry itself, and what config does with it
 // ---------------------------------------------------------------------------
 
-test('the shipped registry is well formed and routes the endpoint it claims to', () => {
+test('the shipped registry is well formed and routes the endpoint each entry claims to', () => {
   assert.ok(PROVIDERS.length > 0, 'the gateway with an empty registry observes nothing');
+  const anthropic = PROVIDERS.find((entry) => entry.name === 'anthropic');
+  const openai = PROVIDERS.find((entry) => entry.name === 'openai');
   const resolve = createRouter({ providers: PROVIDERS });
-  assert.equal(resolve({ url: '/v1/messages' }).modeled, true);
-  assert.equal(resolve({ url: '/v1/messages' }).adapter, PROVIDERS[0].adapter);
+
+  const anthropicRoute = resolve({ url: '/v1/messages' });
+  assert.equal(anthropicRoute.modeled, true);
+  assert.equal(anthropicRoute.adapter, anthropic.adapter);
   // Everything else under the same provider is forwarded and not described.
   assert.equal(resolve({ url: '/v1/models' }).modeled, false);
+
+  // The OpenAI entry is keyed on its own port and must not be shadowed by
+  // Anthropic's port-agnostic catch-all, even though that entry's pathPrefix
+  // ('/') would otherwise match first.
+  const openaiRoute = resolve({ url: '/v1/chat/completions', port: openai.port });
+  assert.equal(openaiRoute.modeled, true);
+  assert.equal(openaiRoute.adapter, openai.adapter);
 });
 
 test('config applies GATEWAY_UPSTREAM over every entry in the registry', () => {
@@ -135,18 +145,30 @@ test('config applies GATEWAY_UPSTREAM over every entry in the registry', () => {
   assert.equal(upstream.href, 'http://127.0.0.1:9/base');
   for (const entry of providers) assert.equal(entry.upstream.href, upstream.href);
 
-  // The default comes from the registry, not from a second copy of the URL.
-  assert.equal(loadConfig({}).upstream.origin, new URL(PROVIDERS[0].upstream).origin);
+  // The default is the registry's port-agnostic entry (Anthropic), not simply
+  // the first one in match order (which is OpenAI, for routing reasons — see
+  // config/providers.js).
+  const anthropic = PROVIDERS.find((entry) => entry.name === 'anthropic');
+  assert.equal(loadConfig({}).upstream.origin, new URL(anthropic.upstream).origin);
 });
 
-test('config refuses a registry transport cannot forward for', () => {
+test('forwardTarget is the passthrough default: the first entry, regardless of how many upstreams the registry names', () => {
   const one = { upstream: new URL('https://a.test') };
   assert.equal(forwardTarget([one, { upstream: new URL('https://a.test') }]).href, one.upstream.href);
   assert.throws(() => forwardTarget([]), /registry is empty/);
-  // The guard exists so the day a second upstream is added is a startup error
-  // naming the work, not a silent misroute to the first one.
-  assert.throws(
-    () => forwardTarget([one, { upstream: new URL('https://b.test') }]),
-    /names 2 upstreams .* per-request upstream/s,
-  );
+  // Two distinct upstreams no longer fails at startup: passthrough still picks
+  // the first (it ignores the registry's routing entirely), and observe mode
+  // resolves the real per-request upstream through resolveUpstream instead.
+  assert.equal(forwardTarget([one, { upstream: new URL('https://b.test') }]).href, one.upstream.href);
+});
+
+test('forwardTarget prefers a port-agnostic entry over match order, so passthrough default and routing order can differ', () => {
+  const portSpecific = { upstream: new URL('https://openai.test'), port: 8788 };
+  const portAgnostic = { upstream: new URL('https://anthropic.test'), port: null };
+  // Match order (routing) has the port-specific entry first so it isn't
+  // shadowed; forwardTarget (passthrough's single default) still finds the
+  // port-agnostic one rather than blindly taking index 0.
+  assert.equal(forwardTarget([portSpecific, portAgnostic]).href, portAgnostic.upstream.href);
+  // With no port-agnostic entry at all, the first one is the honest fallback.
+  assert.equal(forwardTarget([portSpecific, { ...portSpecific, port: 8789 }]).href, portSpecific.upstream.href);
 });

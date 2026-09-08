@@ -63,6 +63,20 @@ export function createMeterTokens({ store, now = Date.now }) {
         // for tokens has to be visible as both.
         requestBytes: ctx.raw.requestSize,
         responseBytes: ctx.raw.responseSize,
+        // null outside transform mode. Inside it: the before/after byte counts
+        // and edit count the ledger's whole purpose is comparing — this phase
+        // measures bytes and substitution counts, not tokens (NEUTRALITY.md
+        // has no tokenizer to count what was never sent).
+        transform:
+          ctx.transform === null || ctx.transform === undefined
+            ? null
+            : {
+                transformed: ctx.transform.transformed,
+                overCap: ctx.transform.overCap,
+                edits: ctx.transform.edits,
+                requestBytesBefore: ctx.transform.requestBytesBefore,
+                requestBytesAfter: ctx.transform.requestBytesAfter,
+              },
       };
       ledger.turns.push(turn);
 

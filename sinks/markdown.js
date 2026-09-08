@@ -44,8 +44,16 @@ function cacheNote(cache) {
 /** A provider-executed tool is not the client's to answer, or a transform's to rewrite. */
 const kindNote = (block) => (block.kind === TOOL_KIND.PROVIDER ? ' _(provider-executed)_' : '');
 
-function blockToMarkdown(block) {
-  const body = renderBlock(block);
+function blockToMarkdown(block, originalBlock) {
+  let body = renderBlock(block);
+  if (
+    originalBlock !== undefined &&
+    originalBlock.type === BLOCK.TEXT &&
+    block.type === BLOCK.TEXT &&
+    originalBlock.text !== block.text
+  ) {
+    body += `\n\n_before transform:_\n\n${quoted(originalBlock.text)}`;
+  }
   return block.cache ? `${body}\n\n${cacheNote(block.cache)}` : body;
 }
 
@@ -86,7 +94,8 @@ function renderBlock(block) {
   }
 }
 
-const contentToMarkdown = (content) => content.map(blockToMarkdown).join('\n\n');
+const contentToMarkdown = (content, originalContent) =>
+  content.map((block, i) => blockToMarkdown(block, originalContent?.[i])).join('\n\n');
 
 function usageLine(usage) {
   if (usage === null) return '_no usage reported_';
@@ -119,6 +128,12 @@ export function renderTranscript({ request, response, ctx }) {
     ...request.messages,
     ...(response !== null ? [{ role: response.role, content: response.content }] : []),
   ];
+  // Present only in transform mode. Indexed the same way `turns` is built
+  // above, so a message's markdown can be paired with what the client
+  // actually wrote before the transform touched it; the response has no
+  // pre-transform counterpart since no response transform exists.
+  const originalMessages = ctx.transform?.originalRequest?.messages ?? null;
+  const originalSystem = ctx.transform?.originalRequest?.system ?? null;
 
   const out = [
     `# Session ${ctx.sessionId}`,
@@ -129,11 +144,14 @@ export function renderTranscript({ request, response, ctx }) {
       `- **endpoint** \`${ctx.method} ${ctx.path}\``,
       `- **turns** ${turns.length}`,
       `- **updated** ${new Date(ctx.finishedAt ?? Date.now()).toISOString()}`,
+      ...(ctx.transform !== null && ctx.transform !== undefined
+        ? [`- **transform** ${ctx.transform.transformed ? `${ctx.transform.edits} edit(s) applied` : 'no edits'}`]
+        : []),
     ].join('\n'),
   ];
 
   if (request.system !== null && request.system.length > 0) {
-    out.push('', '## System', '', contentToMarkdown(request.system));
+    out.push('', '## System', '', contentToMarkdown(request.system, originalSystem));
   }
 
   if (request.tools !== null && request.tools.length > 0) {
@@ -153,7 +171,17 @@ export function renderTranscript({ request, response, ctx }) {
 
   out.push('', '## Conversation');
   turns.forEach((turn, index) => {
-    out.push('', `### ${index + 1} · ${turn.role}`, '', contentToMarkdown(turn.content) || '_empty turn_');
+    // originalMessages only covers request turns; the response (appended
+    // after them) has no pre-transform counterpart to pair with.
+    const originalContent = originalMessages !== null && index < originalMessages.length
+      ? originalMessages[index]?.content
+      : undefined;
+    out.push(
+      '',
+      `### ${index + 1} · ${turn.role}`,
+      '',
+      contentToMarkdown(turn.content, originalContent) || '_empty turn_',
+    );
   });
 
   if (response !== null) {
@@ -180,8 +208,10 @@ export function renderTranscript({ request, response, ctx }) {
 /** The human half of the token ledger. The machine half is the JSON beside it. */
 export function renderLedger({ sessionId, provider, turns, totals }) {
   const cell = (n) => (n === null || n === undefined ? '—' : n.toLocaleString('en-US'));
-  const rows = turns.map((turn) =>
-    [
+  const hasTransform = turns.some((turn) => turn.transform !== null && turn.transform !== undefined);
+
+  const rows = turns.map((turn) => {
+    const base = [
       turn.turn,
       new Date(turn.at).toISOString().slice(11, 19),
       turn.model ?? '—',
@@ -193,8 +223,26 @@ export function renderLedger({ sessionId, provider, turns, totals }) {
       cell(turn.totalTokens),
       turn.stopReason ?? '—',
       cell(turn.durationMs),
-    ].join(' | '),
-  );
+    ];
+    if (!hasTransform) return base.join(' | ');
+    const t = turn.transform;
+    const transformCells =
+      t === null || t === undefined
+        ? ['—', '—', '—']
+        : [
+            cell(t.requestBytesBefore),
+            cell(t.requestBytesAfter),
+            t.overCap ? `${cell(t.edits)} (over cap)` : cell(t.edits),
+          ];
+    return [...base, ...transformCells].join(' | ');
+  });
+
+  const header = hasTransform
+    ? '| turn | at | model | input | output | reasoning | cache read | cache write | total | stop | ms | bytes before | bytes after | edits |'
+    : '| turn | at | model | input | output | reasoning | cache read | cache write | total | stop | ms |';
+  const divider = hasTransform
+    ? '| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |'
+    : '| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |';
 
   return [
     `# Tokens — session ${sessionId}`,
@@ -203,8 +251,8 @@ export function renderLedger({ sessionId, provider, turns, totals }) {
     `- **turns** ${totals.turns}`,
     `- **bytes on the wire** ${cell(totals.requestBytes)} up · ${cell(totals.responseBytes)} down`,
     '',
-    '| turn | at | model | input | output | reasoning | cache read | cache write | total | stop | ms |',
-    '| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |',
+    header,
+    divider,
     ...rows.map((row) => `| ${row} |`),
     '',
     '**totals** ' +

@@ -4,8 +4,8 @@ import { createProxyHandler } from './proxy.js';
 /**
  * @returns {{ server: import('node:http').Server, listen: () => Promise<import('node:http').Server> }}
  */
-export function createServer({ config, onExchange, log = console }) {
-  const server = http.createServer(createProxyHandler({ config, onExchange, log }));
+export function createServer({ config, onExchange, resolveUpstream, transformRequest, log = console }) {
+  const server = http.createServer(createProxyHandler({ config, onExchange, resolveUpstream, transformRequest, log }));
 
   // The gateway must not impose a shorter life on a request than the upstream
   // does; upstream timeouts are handled explicitly per request.

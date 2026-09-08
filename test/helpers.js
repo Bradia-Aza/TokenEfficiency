@@ -4,7 +4,28 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '../config/index.js';
+import { createRouter } from '../routing/index.js';
 import { createServer } from '../transport/server.js';
+import { apply as applyTransforms } from '../transforms/index.js';
+import { createSubstituteTransform } from '../transforms/substitute.js';
+
+/**
+ * The same `transformRequest` composition `index.js` builds, wired up for a
+ * test's router and dictionary rather than being stubbed — so transport tests
+ * exercise the real seam, not a hand-rolled substitute of it.
+ */
+export function buildTransformRequest({ providers, dictionary }) {
+  const resolve = createRouter({ providers });
+  const transforms = [createSubstituteTransform(dictionary)];
+  return async ({ port, path, body }) => {
+    const route = resolve({ port, url: path });
+    if (!route.modeled) return null;
+    const canonicalRequest = route.adapter.requestToCanonical(JSON.parse(body.toString('utf8')));
+    const { request, edits } = applyTransforms(canonicalRequest, transforms);
+    if (edits === 0) return null;
+    return Buffer.from(JSON.stringify(route.adapter.requestFromCanonical(request)), 'utf8');
+  };
+}
 
 /** An upstream under the test's control. */
 export async function startUpstream(handler) {
@@ -36,10 +57,15 @@ export async function startBlackhole() {
 
 /**
  * @param {object} env environment overrides for loadConfig
- * @param {{ buildObserver?: (deps: { config: object, log: object }) => Function }} [options]
- *   Supply the real observation stack instead of the recording stub.
+ * @param {{ buildObserver?: (deps: { config: object, log: object }) => Function,
+ *           resolveUpstream?: (request: object) => URL|null,
+ *           transformRequest?: (request: object) => Promise<Buffer|null> }} [options]
+ *   Supply the real observation stack instead of the recording stub, and/or a
+ *   per-request upstream resolver (the Phase 1 seam); omitted, transport falls
+ *   back to the single `config.upstream`, as it did before that seam existed.
+ *   `transformRequest` is the Phase 6 seam, only ever called in transform mode.
  */
-export async function startGateway(env = {}, { buildObserver } = {}) {
+export async function startGateway(env = {}, { buildObserver, resolveUpstream, transformRequest } = {}) {
   const exchanges = [];
   const logs = [];
   const log = { error: (line) => logs.push(line) };
@@ -53,6 +79,8 @@ export async function startGateway(env = {}, { buildObserver } = {}) {
             exchanges.push(record);
           }
         : buildObserver({ config, log }),
+    resolveUpstream,
+    transformRequest,
     log,
   });
   await listen();

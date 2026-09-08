@@ -1,8 +1,30 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import test from 'node:test';
-import { deferred, raw, startBlackhole, startGateway, startUpstream } from './helpers.js';
+import { fileURLToPath } from 'node:url';
+import { adapter as anthropicAdapter } from '../adapters/anthropic.js';
+import { loadConfig } from '../config/index.js';
+import { createRouter } from '../routing/index.js';
+import { buildTransformRequest, deferred, raw, startBlackhole, startGateway, startUpstream } from './helpers.js';
 
-const MODES = ['observe', 'passthrough'];
+const EMPTY_DICT = join(fileURLToPath(new URL('.', import.meta.url)), 'fixtures/dict/empty.json');
+
+const MODES = ['observe', 'passthrough', 'transform'];
+
+/**
+ * transform mode needs `GATEWAY_TRANSFORM_DICT` at load time and a wired
+ * `transformRequest`; the other two modes need neither. An empty dictionary
+ * makes transform mode's forward byte-identical to observe mode's per
+ * invariant 6, so the same byte-fidelity assertions below hold for all three
+ * modes in this loop.
+ */
+function startGatewayInMode(mode, env) {
+  if (mode !== 'transform') return startGateway({ ...env, GATEWAY_MODE: mode });
+  const fullEnv = { ...env, GATEWAY_MODE: mode, GATEWAY_TRANSFORM_DICT: EMPTY_DICT };
+  const { providers } = loadConfig({ GATEWAY_PORT: '0', GATEWAY_HOST: '127.0.0.1', ...fullEnv });
+  const transformRequest = buildTransformRequest({ providers, dictionary: {} });
+  return startGateway(fullEnv, { transformRequest });
+}
 
 // Invariant 2: if it can't be modeled, it's moved unchanged. Phase 1 models
 // nothing, so everything must survive the trip byte-for-byte - in both modes.
@@ -18,7 +40,7 @@ for (const mode of MODES) {
         res.end('{"ok":true}');
       });
     });
-    const gateway = await startGateway({ GATEWAY_UPSTREAM: upstream.origin, GATEWAY_MODE: mode });
+    const gateway = await startGatewayInMode(mode, { GATEWAY_UPSTREAM: upstream.origin });
     t.after(async () => {
       await gateway.close();
       await upstream.close();
@@ -49,7 +71,7 @@ for (const mode of MODES) {
       });
       res.end('{"type":"error","error":{"type":"rate_limit_error"}}');
     });
-    const gateway = await startGateway({ GATEWAY_UPSTREAM: upstream.origin, GATEWAY_MODE: mode });
+    const gateway = await startGatewayInMode(mode, { GATEWAY_UPSTREAM: upstream.origin });
     t.after(async () => {
       await gateway.close();
       await upstream.close();
@@ -72,7 +94,7 @@ for (const mode of MODES) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(garbage);
     });
-    const gateway = await startGateway({ GATEWAY_UPSTREAM: upstream.origin, GATEWAY_MODE: mode });
+    const gateway = await startGatewayInMode(mode, { GATEWAY_UPSTREAM: upstream.origin });
     t.after(async () => {
       await gateway.close();
       await upstream.close();
@@ -93,7 +115,7 @@ for (const mode of MODES) {
       res.write('event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n');
       res.end();
     });
-    const gateway = await startGateway({ GATEWAY_UPSTREAM: upstream.origin, GATEWAY_MODE: mode });
+    const gateway = await startGatewayInMode(mode, { GATEWAY_UPSTREAM: upstream.origin });
     t.after(async () => {
       await gateway.close();
       await upstream.close();
@@ -279,4 +301,112 @@ test('returns 504 when the upstream connection never completes', async (t) => {
   const res = await raw(gateway.origin, { path: '/v1/messages' });
   assert.equal(res.statusCode, 504);
   assert.match(res.body.toString(), /connect/);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1 — the resolveUpstream seam: a per-request upstream, resolved from
+// the registry rather than the single upstream `config.upstream` names. Proved
+// here, at the transport layer, with two loopback servers and no adapter
+// involved — this is a transport concern and should not need one.
+// ---------------------------------------------------------------------------
+
+test('resolveUpstream sends two entrypoints to two different upstreams from one gateway process', async (t) => {
+  let seenA;
+  const upstreamA = await startUpstream((req, res) => {
+    seenA = { url: req.url, headers: req.headers };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"from":"a"}');
+  });
+  let seenB;
+  const upstreamB = await startUpstream((req, res) => {
+    seenB = { url: req.url, headers: req.headers };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"from":"b"}');
+  });
+
+  // A registry-shaped lookup: port 0 (the test binds an ephemeral port, so this
+  // keys on path instead) selects an upstream by path prefix, mirroring what
+  // config/providers.js -> routing/ would hand `index.js`.
+  const resolveUpstream = ({ path }) =>
+    path.startsWith('/a/') ? new URL(upstreamA.origin) : path.startsWith('/b/') ? new URL(upstreamB.origin) : null;
+
+  const gateway = await startGateway({}, { resolveUpstream });
+  t.after(async () => {
+    await gateway.close();
+    await upstreamA.close();
+    await upstreamB.close();
+  });
+
+  const resA = await raw(gateway.origin, { path: '/a/v1/messages', headers: { 'x-marker': 'A' } });
+  const resB = await raw(gateway.origin, { path: '/b/v1/messages', headers: { 'x-marker': 'B' } });
+
+  assert.equal(resA.statusCode, 200);
+  assert.equal(resA.body.toString(), '{"from":"a"}');
+  assert.equal(seenA.url, '/a/v1/messages');
+  assert.equal(seenA.headers['x-marker'], 'A');
+
+  assert.equal(resB.statusCode, 200);
+  assert.equal(resB.body.toString(), '{"from":"b"}');
+  assert.equal(seenB.url, '/b/v1/messages');
+  assert.equal(seenB.headers['x-marker'], 'B');
+});
+
+test('an unroutable request in observe mode gets a 404 with an inert body, not a crash', async (t) => {
+  const resolveUpstream = () => null;
+  const gateway = await startGateway({}, { resolveUpstream });
+  t.after(() => gateway.close());
+
+  const res = await raw(gateway.origin, { path: '/nothing/claims/this' });
+  assert.equal(res.statusCode, 404);
+  assert.match(res.body.toString(), /not found/i);
+});
+
+test('a registry with the Anthropic entry duplicated under a second port boots and routes both', async (t) => {
+  // Exactly the Phase 1 exit criterion: two registry entries naming two
+  // different upstreams, keyed by port, resolved through the real router — no
+  // OpenAI adapter involved, because this is a transport concern.
+  const upstreamA = await startUpstream((req, res) => res.end('a'));
+  const upstreamB = await startUpstream((req, res) => res.end('b'));
+
+  // Registry entries carry a parsed URL by the time routing/ sees them —
+  // config/index.js's loadProviders does that parsing; this mirrors it rather
+  // than going through loadConfig, since the point here is the router's output
+  // feeding resolveUpstream, not config loading.
+  const providers = [
+    { name: 'anthropic', adapter: anthropicAdapter, upstream: new URL(upstreamA.origin), port: null, pathPrefix: '/', modeledPaths: ['/v1/messages'] },
+    { name: 'anthropic-2', adapter: anthropicAdapter, upstream: new URL(upstreamB.origin), port: 9999, pathPrefix: '/', modeledPaths: ['/v1/messages'] },
+  ];
+  const resolve = createRouter({ providers });
+  const resolveUpstream = ({ port, path }) => resolve({ port, url: path }).upstream;
+
+  const gateway = await startGateway({}, { resolveUpstream });
+  t.after(async () => {
+    await gateway.close();
+    await upstreamA.close();
+    await upstreamB.close();
+  });
+
+  // The gateway's own ephemeral port never matches the entry keyed on 9999, so
+  // this always resolves to the port-agnostic entry.
+  const res = await raw(gateway.origin, { path: '/v1/messages' });
+  assert.equal(res.body.toString(), 'a');
+});
+
+test('passthrough mode ignores resolveUpstream entirely and forwards to config.upstream', async (t) => {
+  const upstream = await startUpstream((req, res) => res.end('passthrough-ok'));
+  const neverCalled = () => {
+    throw new Error('resolveUpstream must not be called in passthrough mode');
+  };
+  const gateway = await startGateway(
+    { GATEWAY_UPSTREAM: upstream.origin, GATEWAY_MODE: 'passthrough' },
+    { resolveUpstream: neverCalled },
+  );
+  t.after(async () => {
+    await gateway.close();
+    await upstream.close();
+  });
+
+  const res = await raw(gateway.origin, { path: '/v1/messages' });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.toString(), 'passthrough-ok');
 });

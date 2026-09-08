@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto';
 import { deepFreeze } from '../canonical/freeze.js';
+import { countTextEdits } from '../transforms/index.js';
 
 /** Last value wins, matching how a client would read a repeated header. */
 function headerValue(rawHeaders, name) {
@@ -87,8 +88,14 @@ export function createExchangeObserver({ resolve, pipeline, log = console }) {
         return;
       }
 
+      // Transform mode only: `exchange.request` is what was actually sent, and
+      // `exchange.originalRequest` is what the client sent before the
+      // transform ran. Both get turned into canonical for observation — the
+      // transcript shows what the model saw, the ledger shows what changed.
+      const transformInfo = buildTransformInfo({ exchange, adapter, canonicalRequest, label, log });
+
       const responseContentType = headerValue(exchange.responseHeaders, 'content-type');
-      const ctx = buildContext({ exchange, provider, path, canonicalRequest, responseContentType });
+      const ctx = buildContext({ exchange, provider, path, canonicalRequest, responseContentType, transformInfo });
 
       await pipeline.onRequest(canonicalRequest, ctx);
 
@@ -98,6 +105,38 @@ export function createExchangeObserver({ resolve, pipeline, log = console }) {
       log.error(`[gateway] ${label} observation failed: ${err?.stack || err}`);
     }
   };
+}
+
+/**
+ * `null` outside transform mode. Inside it, the pre-transform canonical
+ * request plus how many text blocks changed — a throw here (an unparseable
+ * `originalRequest`, which should not happen since transport only ever puts
+ * bytes there that came from the same body it read) degrades to `null` rather
+ * than losing the request's own observation.
+ */
+function buildTransformInfo({ exchange, adapter, canonicalRequest, label, log }) {
+  if (exchange.originalRequest === undefined) return null;
+  const problem = unreadable(exchange.originalRequest);
+  if (problem !== null) {
+    log.error(`[gateway] ${label} pre-transform request not observable: ${problem}`);
+    return null;
+  }
+  try {
+    const originalCanonical = adapter.requestToCanonical(
+      JSON.parse(exchange.originalRequest.bytes.toString('utf8')),
+    );
+    return {
+      originalRequest: originalCanonical,
+      transformed: exchange.transformed === true,
+      overCap: exchange.overCap === true,
+      edits: exchange.transformed === true ? countTextEdits(originalCanonical, canonicalRequest) : 0,
+      requestBytesBefore: exchange.originalRequest.size,
+      requestBytesAfter: exchange.request.size,
+    };
+  } catch (err) {
+    log.error(`[gateway] ${label} pre-transform request could not be modeled: ${err?.message || err}`);
+    return null;
+  }
 }
 
 function toCanonicalResponse({ exchange, adapter, responseContentType, label, log }) {
@@ -123,7 +162,7 @@ function toCanonicalResponse({ exchange, adapter, responseContentType, label, lo
  * Session id, provider name, timestamps, and the raw bytes — the fidelity the
  * canonical model deliberately does not offer.
  */
-function buildContext({ exchange, provider, path, canonicalRequest, responseContentType }) {
+function buildContext({ exchange, provider, path, canonicalRequest, responseContentType, transformInfo }) {
   const startedAt = exchange.startedAt ?? null;
   const finishedAt = exchange.finishedAt ?? null;
   return deepFreeze({
@@ -140,6 +179,11 @@ function buildContext({ exchange, provider, path, canonicalRequest, responseCont
     finishedAt,
     durationMs: startedAt !== null && finishedAt !== null ? finishedAt - startedAt : null,
     streamed: isEventStream(responseContentType),
+    // null outside transform mode. Inside it: the pre-transform canonical
+    // request, whether a transform actually ran, and byte counts before/after
+    // — what meter-tokens.js needs to record the baseline-vs-transformed
+    // comparison the ledger exists for.
+    transform: transformInfo,
     raw: {
       request: exchange.request?.bytes ?? null,
       response: exchange.response?.bytes ?? null,
