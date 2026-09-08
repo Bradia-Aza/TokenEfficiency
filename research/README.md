@@ -85,6 +85,43 @@ the model) or `throw` (what the user sees when a hook fails). The proxy side's
 failure semantics are already defined by invariant 3; the hook side's are
 established here by experiment.
 
+## The cache experiment (Phase 0.5)
+
+The highest-value phase, and the one most likely to reverse the conclusion. Run
+the multi-turn scenario three ways and compare.
+
+The substitution transform from `TRANSFORM_PLAN.md` stands in for a real trim:
+it changes content deterministically without the minification work existing yet.
+
+```sh
+# 1. untrimmed baseline
+GATEWAY_PLUGINS=dump-session,meter-tokens,raw-capture \
+  GATEWAY_RAW_CAPTURE=research/captures/cache-untrimmed.jsonl npm start &
+# ...run the multi-turn-thread scenario, 8+ turns, then stop the gateway...
+
+# 2. trimmed at the proxy
+GATEWAY_MODE=transform GATEWAY_TRANSFORM_DICT=test/fixtures/dict/... \
+  GATEWAY_PLUGINS=dump-session,meter-tokens,raw-capture \
+  GATEWAY_RAW_CAPTURE=research/captures/cache-proxy.jsonl npm start &
+# ...run the SAME conversation...
+
+# 3. trimmed at the hook (PreToolUse rewrite, mutate-hook.js MODE=mark)
+
+node research/analyze/cache.js \
+  --run untrimmed=research/captures/cache-untrimmed.jsonl \
+  --run proxy=research/captures/cache-proxy.jsonl \
+  --run hook=research/captures/cache-hook.jsonl
+```
+
+Run the same conversation each time — the comparison is only meaningful if the
+three differ solely in where the trim happened.
+
+The verdict to watch: a stable prefix writes the cache once and reads it
+thereafter. Cache writes on nearly every turn mean the prefix is being rebuilt,
+and a trim that removes content while destroying the cache shows up as a net
+**cost**. If that is what a proxy-level trim does, deterministic replayed state
+is a first-order architectural constraint and belongs at the top of the report.
+
 ## Rig invariants
 
 From the plan, restated because they are what keeps scaffolding from becoming
@@ -115,6 +152,6 @@ scenarios/record-run.js  window the captures per scenario; per-scenario reports
 analyze/reach.js      RQ2 — token-weighted reachability
 analyze/mutation.js   RQ3 — what each side can change, and how it fails
 scenarios/mutate-hook.js  the RQ3 hook experiment: noop / mark / throw
-analyze/cache.js      RQ4 — cache-prefix impact
+analyze/cache.js      RQ4 — cache-prefix impact, three runs compared
 captures/             run output, gitignored
 ```
