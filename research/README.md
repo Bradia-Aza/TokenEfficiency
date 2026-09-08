@@ -122,6 +122,22 @@ and a trim that removes content while destroying the cache shows up as a net
 **cost**. If that is what a proxy-level trim does, deterministic replayed state
 is a first-order architectural constraint and belongs at the top of the report.
 
+## Latency and the report (Phase 0.6)
+
+```sh
+node research/analyze/latency.js --mode observe
+```
+
+Needs no new scenarios — it reads timestamps already in both captures. Exchange
+durations include the upstream's think time, so the gateway's own overhead is
+the difference between a `passthrough` run and an `observe`/`transform` run of
+comparable work.
+
+The finding is `INTERCEPTION_FINDINGS.md` in the repo root. `test/findings.test.js`
+holds it to the plan's exit criterion: six sections in order, the recommendation
+first, every finding labeled measured/argued/pending, and no claim of a result
+the rig has not actually produced.
+
 ## Rig invariants
 
 From the plan, restated because they are what keeps scaffolding from becoming
@@ -151,6 +167,7 @@ scenarios/index.js    the adversarial scenario set, and the runbook
 scenarios/record-run.js  window the captures per scenario; per-scenario reports
 analyze/reach.js      RQ2 — token-weighted reachability
 analyze/mutation.js   RQ3 — what each side can change, and how it fails
+analyze/latency.js    RQ5 — added wall-clock, from timestamps already captured
 scenarios/mutate-hook.js  the RQ3 hook experiment: noop / mark / throw
 analyze/cache.js      RQ4 — cache-prefix impact, three runs compared
 captures/             run output, gitignored
