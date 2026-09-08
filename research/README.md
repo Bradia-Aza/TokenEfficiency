@@ -41,6 +41,32 @@ Output lands in `research/captures/` (gitignored):
 
 Override either path with `GATEWAY_RAW_CAPTURE` / `GATEWAY_HOOK_CAPTURE`.
 
+## Running the scenarios (Phase 0.3)
+
+A normal session makes both sides look equivalent, so the scenario set is chosen
+to force them apart. Print the runbook:
+
+```sh
+node research/scenarios/index.js
+```
+
+Both captures are append-only across a sitting, so a scenario is a time window
+over them. Mark the window explicitly — session ids do not align across the two
+sides, which is the problem the correlator exists to work around:
+
+```sh
+node research/scenarios/record-run.js start bash-large-output
+# ...run the scenario in the client...
+node research/scenarios/record-run.js stop bash-large-output --note "what happened"
+node research/scenarios/record-run.js report      # per-scenario correlation reports
+node research/scenarios/record-run.js status
+```
+
+Three of the eight are scripted; five need a human (declining a permission
+prompt, interrupting a turn, pasting an image, triggering compaction). Mark
+those with `--manual`. An honest manual result beats a synthetic automated one,
+but only if the record says which it was.
+
 ## Rig invariants
 
 From the plan, restated because they are what keeps scaffolding from becoming
@@ -66,8 +92,9 @@ production:
 hook-logger.js        the universal hook: every event, verbatim, to JSONL
 hooks.settings.json   registration for all 33 events
 correlate.js          RQ1 — content-hash alignment of the two captures
+scenarios/index.js    the adversarial scenario set, and the runbook
+scenarios/record-run.js  window the captures per scenario; per-scenario reports
 analyze/reach.js      RQ2 — token-weighted reachability
 analyze/cache.js      RQ4 — cache-prefix impact
-scenarios/            the adversarial scenario scripts
 captures/             run output, gitignored
 ```
