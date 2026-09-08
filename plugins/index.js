@@ -3,10 +3,14 @@
 
 import { createDumpSession } from './dump-session.js';
 import { createMeterTokens } from './meter-tokens.js';
+import { createRawCapture } from './raw-capture.js';
 
 const FACTORIES = {
   'dump-session': createDumpSession,
   'meter-tokens': createMeterTokens,
+  // A research instrument (INTERCEPTION_RESEARCH_PLAN.md Phase 0.1), off by
+  // default: enable it with GATEWAY_PLUGINS for a measured session.
+  'raw-capture': createRawCapture,
 };
 
 export const PLUGIN_NAMES = Object.freeze(Object.keys(FACTORIES));
