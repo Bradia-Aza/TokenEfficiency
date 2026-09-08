@@ -67,6 +67,24 @@ prompt, interrupting a turn, pasting an image, triggering compaction). Mark
 those with `--manual`. An honest manual result beats a synthetic automated one,
 but only if the record says which it was.
 
+## Reach and mutation (Phase 0.4)
+
+```sh
+node research/analyze/reach.js       # RQ2 — where the input tokens actually are
+node research/analyze/mutation.js    # RQ3 — the mutation table
+```
+
+Reach apportions the provider's reported input tokens across content categories
+in proportion to character mass. There is no tokenizer here (zero dependencies),
+so character figures are exact and token figures are estimates with a known
+bias — JSON tool arguments tokenize worse than prose. Both are reported.
+
+The RQ3 hook experiment is run by registering `mutate-hook.js` on `PreToolUse`
+with `MUTATE_MODE` set to `noop` (the path works), `mark` (the change reaches
+the model) or `throw` (what the user sees when a hook fails). The proxy side's
+failure semantics are already defined by invariant 3; the hook side's are
+established here by experiment.
+
 ## Rig invariants
 
 From the plan, restated because they are what keeps scaffolding from becoming
@@ -95,6 +113,8 @@ correlate.js          RQ1 — content-hash alignment of the two captures
 scenarios/index.js    the adversarial scenario set, and the runbook
 scenarios/record-run.js  window the captures per scenario; per-scenario reports
 analyze/reach.js      RQ2 — token-weighted reachability
+analyze/mutation.js   RQ3 — what each side can change, and how it fails
+scenarios/mutate-hook.js  the RQ3 hook experiment: noop / mark / throw
 analyze/cache.js      RQ4 — cache-prefix impact
 captures/             run output, gitignored
 ```
