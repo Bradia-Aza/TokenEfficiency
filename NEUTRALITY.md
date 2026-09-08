@@ -304,6 +304,158 @@ asserted.
 | a tool call's argument fragment when a stream is cut mid-JSON | there is no object to model because the turn never completed; the accumulator records a warning, and a completed turn never takes this path |
 | the wire block type behind a `media` block or a provider tool result | adapter bookkeeping for an exact round trip; the facts a plugin reads are `kind` and `source.mediaType` |
 
+## OpenAI adapter — Phase 0 decisions
+
+Recorded before `adapters/openai.js` was written, per `OPENAI_ADAPTER_PLAN.md`.
+
+**Which API.** Chat Completions (`/v1/chat/completions`), not Responses. It is
+what `NEUTRALITY.md` above is already written against, what most
+OpenAI-compatible clients and third-party gateways speak, and the smaller
+target. The Responses API mapping sketch at the end of this document stands as
+the argument for a later plan; it is not relitigated here.
+
+**`n` > 1.** Canonical models one turn, same as every other provider surveyed
+(see Table C, "Canonical models one turn... extras in `raw`"). The OpenAI
+adapter reads `choices[0]` only; `choices[1..]` are not modeled and are not
+reachable from canonical at all — the same treatment Anthropic's own multi-turn
+extras get. `usage.completion_tokens` already covers every choice, so the
+ledger's cost accounting is not affected by which choice canonical exposes.
+
+**Role vocabulary.** OpenAI's four message roles map as follows:
+
+- `system` / `developer` **at message index 0** — folded into `request.system`,
+  exactly like Anthropic's top-level `system` and Gemini's `systemInstruction`.
+  The adapter records which spelling it saw (`system` vs `developer`) only when
+  it is not the adapter's own default on the way back out.
+- `system` / `developer` **anywhere else in the thread** — becomes a
+  `ROLE.SYSTEM` message, per the change already recorded above (`ROLE.SYSTEM`
+  exists for exactly this case). `fromCanonical` emits `role: "developer"` for
+  it, since `developer` is OpenAI's current spelling for an in-thread
+  instruction and the deprecated `system`-mid-thread form is not one this
+  adapter needs to produce; a canonical `ROLE.SYSTEM` message that arrived as
+  wire `system` keeps that spelling in `raw` and it wins on the way out.
+- `user` — `ROLE.USER`, unremarkable.
+- `assistant` — `ROLE.ASSISTANT`.
+- `tool` — **not a role in canonical.** A `{role: "tool", tool_call_id,
+  content}` message is a tool *result*, not an instruction or a turn of its
+  own. It becomes a `ROLE.USER` message containing one `toolResultBlock`,
+  mirroring exactly how the Anthropic adapter nests a tool result inside a user
+  turn. `fromCanonical` reverses this: a `ROLE.USER` message whose content is
+  exactly one `toolResultBlock` (and nothing else) round-trips back out as its
+  own `{role: "tool", ...}` message rather than merging into a neighboring user
+  turn, since that is the only shape a `tool` message can take on the wire.
+- deprecated `function` role (paired with the deprecated top-level
+  `function_call`) — out of scope. It predates the current tool-calling
+  surface, no fixture exercises it, and modeling a second, deprecated
+  tool-calling mechanism alongside the current one would be exactly the kind of
+  speculative machinery this build avoids. An adapter encountering it produces
+  an `unknownBlock`/degraded message rather than a crash, per invariant 2.
+
+**Content as string vs. parts.** Both `content: "text"` and
+`content: [{type:"text", text:"..."}, ...]` are accepted on input, exactly the
+sugar Anthropic already has for `system` and message content. `toCanonical`
+normalizes either into a block list. `fromCanonical` always emits the **parts
+array** form, never the bare-string sugar — the array form is a strict
+superset (it is the only form that can carry an image or file part), so
+emitting it unconditionally means the adapter never has to decide "was this
+turn text-only in a way that stays text-only forever." The fixture harness's
+own OpenAI equivalence list (invariant 8) states this as the one string/array
+equivalence it allows, separate from Anthropic's list.
+
+## Phase 5 — the OpenAI column, now with evidence
+
+`adapters/openai.js` exists. Every OpenAI cell above that a real request or
+response fixture reaches is now asserted through the adapter itself in
+`test/neutrality.test.js`, in the section headed "The OpenAI column, now with
+evidence" — the same `withoutRaw` view the Anthropic assertions use, so a fact
+sliding back into `raw` still fails the build. This section records what
+building the adapter found the table wrong or silent about, and what that
+implies for the Gemini column, which has had no such exercise yet.
+
+### Corrections found building the adapter
+
+None of these are cells that were filled with the wrong provider spelling —
+Phase 5 of the skeleton had already gotten the field-by-field mapping right.
+What the table understated was *structure*: three places where a single-row
+mapping hid a shape decision an implementer would otherwise have to invent, and
+one place where the table simply didn't say what a real fixture forced.
+
+| # | What the table said | What building the adapter found |
+| --- | --- | --- |
+| 1 | Table B, Calls and results: `"{type:"tool_result", tool_use_id}" → ToolResultBlock.callId ↔ "{role:"tool", tool_call_id}"` | This reads as a field-to-field mapping, but a `{role:"tool"}` entry is a *message*, and canonical has no message role for it at all — `ROLE.USER`, `ROLE.ASSISTANT` and `ROLE.SYSTEM` are the whole enum. The correction: a `tool` message becomes a `ROLE.USER` message wrapping exactly one `toolResultBlock`, the same nesting Anthropic already uses for its own tool results. `fromCanonical` recognizes that exact shape (one `ROLE.USER` message, one `toolResultBlock`, nothing else) and reverses it back to a standalone `{role:"tool"}` message rather than merging it into a neighboring user turn. This is now stated explicitly in the Phase 0 decisions above; the table entry itself was too terse to show it. |
+| 2 | Table B, Tool choice: `"disable_parallel_tool_use: false" → allowParallel: true ↔ request-level parallel_tool_calls: true` | The table implies this is a straightforward field read, but OpenAI's `parallel_tool_calls` is *request-level*, independent of whether `tool_choice` is present at all. A request can send `parallel_tool_calls` with no `tool_choice` field whatsoever, and canonical's only home for the permission is inside a `toolChoice` object. The adapter has to synthesize a bare `{mode: AUTO}` toolChoice purely to carry `allowParallel` when the wire sent no `tool_choice` — a case the table's single row doesn't surface. |
+| 3 | Table C, Envelope: `"{type:"error", error:{type, message}}" → .error ↔ HTTP body {error:{type, message, code}}"` | OpenAI's error object carries a `code` field the table lists but canonical's `apiError` has no dedicated field for. The correction is unremarkable — `code` lands in `error.raw`, the same as any other provider surplus — but it is worth recording because the first implementation mistakenly listed `code` alongside `type`/`message` as an already-modeled key, which silently discarded it instead of routing it to `raw`. The fixture round trip (`response-error.json`) is what caught this; a table cell alone would not have. |
+| 4 | Table A: `"thinking.type: enabled\|disabled" → params.reasoning.enabled ↔ reasoning_effort present at all"` | Correct as far as it goes, but incomplete: when `reasoning_effort` is entirely absent, the adapter does not produce `params.reasoning = {enabled: false, ...}` — it produces `params.reasoning = null`. "Disabled" and "never mentioned" are different facts (Anthropic can explicitly say `thinking.type: "disabled"`; OpenAI can only ever fail to mention `reasoning_effort`), and only the first is expressible as `enabled: false`. The table's phrasing ("present at all") gestures at this but doesn't state the resulting canonical value, which is `null`, not a reasoning config with `enabled: false`. |
+
+None of the four required a model change — `NEUTRALITY.md`'s "what this
+exercise changed" table above (nine fields, all fixed before any second
+adapter existed) had already generalized far enough to hold OpenAI's real
+shapes without a new canonical field. That is itself informative: the model
+work Phase 5 of the skeleton did *before* a second adapter existed was not
+guesswork that got lucky, and the corrections above are documentation gaps,
+not schema gaps.
+
+### The Gemini column, reassessed
+
+The OpenAI column just went from paper to code, and every cell in it either
+held or needed a documentation fix, never a model fix. That is reassuring but
+not transferable proof: Gemini is structurally the furthest of the three
+formats from Anthropic's (no in-band system role, no call-result correlation
+by id, mandatory structured tool results, single-shot streaming chunks), which
+is exactly why its rows were the ones that forced the nine model changes in the
+first place. Building OpenAI validated the *general* shape of those changes
+(`ROLE.SYSTEM`, `TOOL_KIND`, `BLOCK.JSON`, the usage derivations) against a
+second, different set of provider quirks — but every specific Gemini cell is
+still exactly as validated as it was before this phase: not at all. Cells worth
+flagging as most likely to be wrong the same way the four corrections above
+were wrong, once someone builds the adapter:
+
+- **`functionResponse.name` correlation** (Table B, Calls and results). The
+  OpenAI correction above shows that "provider addresses a tool result to its
+  call" is not one shape but at least two — id-based (Anthropic, OpenAI) and
+  name-based (Gemini) — and the table's one row per provider undersold how much
+  adapter logic id-based correlation already needed (resolving `name` once from
+  the call list). Gemini's name-only correlation is likely to need at least
+  that much machinery, and possibly more if a conversation ever has two
+  in-flight calls to the same tool.
+- **The Gemini role fold** (Table A: `"a ROLE.SYSTEM message folds into the
+  next user turn"`). This is stated as a fact but was never exercised by
+  anything before this phase, including this phase — no Gemini adapter exists
+  to fold it. Given correction #1 above, "folds into the next user turn" is
+  exactly the kind of one-line gloss that turned out to hide a multi-message
+  shape decision for OpenAI's `tool` role. It should be treated as a hypothesis
+  until a Gemini adapter's fixtures prove it.
+- **`STOP_REASON.TOOL_CALL` as derived** (Table C, Stop reasons: `"Gemini
+  reports a plain stop, so the adapter infers it from the presence of
+  functionCall parts"`). Every other stop-reason cell in the table is a direct
+  field read; this is the one place the table already flags a derivation, which
+  is exactly the shape of thing correction #4 shows the table can still get
+  half-right (the derivation is named, but not what happens when the inference
+  is ambiguous — e.g. a Gemini response with both text and a `functionCall`
+  part, which Chat Completions cannot even produce since `finish_reason` is
+  authoritative there).
+
+None of this is a claim that the Gemini column is wrong — only that "no second
+adapter needed to change the model" is weaker evidence for Gemini than it is
+for OpenAI, because Gemini's rows are the harder ones and the phase that just
+finished tested the easier set.
+
+### Ledger comparability
+
+`test/neutrality.test.js`'s final section asserts the claim invariant 6 and the
+usage-accounting table both depend on: the same conversation, run through the
+Anthropic and OpenAI adapters, produces `usage` objects that mean the same
+thing even though the numbers differ. Concretely, for one identical turn
+(`response-tool-calls.json`, mirrored as an OpenAI fixture of the same name):
+both adapters report `inputTokens` and `outputTokens` as real numbers (never
+null, so the comparison is meaningful), Anthropic's `cacheWriteTokens` is a
+real reported number while OpenAI's is `null` (never a `0` standing in for "no
+such concept"), and each adapter's `inputTokens` is strictly less than its
+provider's own raw inclusive prompt counter — proof neither adapter is
+forwarding a cache-inclusive number under the exclusive name. This is the
+baseline every future transform is judged against; if it is not comparable
+across providers, it is not a baseline.
+
 ## Note on the OpenAI Responses API
 
 The table maps Chat Completions, which is the format most third-party gateways
@@ -348,3 +500,13 @@ invariant 1 structurally.
   the argument for each.
 - The fixture harness future adapters will use exists, is adapter-agnostic, and
   runs over the whole corpus.
+- **Met for OpenAI.** Every OpenAI cell the fixture corpus reaches is now an
+  assertion driven through `adapters/openai.js`, not paper. Four documentation
+  corrections were found and are recorded above; none required a model change.
+  A cross-provider ledger-comparability assertion runs in the same test file
+  Anthropic's neutrality assertions live in, so it runs in CI alongside them.
+- **Not yet met for Gemini.** No Gemini adapter exists, so that column remains
+  exactly as validated as it was at the end of the skeleton: not at all. The
+  "Gemini column, reassessed" section above names the specific cells most
+  likely to need a correction of the same shape OpenAI's four were, for
+  whoever builds that adapter next.

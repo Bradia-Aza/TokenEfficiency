@@ -22,6 +22,7 @@ import {
   responseToCanonical,
   streamBytesToCanonical,
 } from '../adapters/anthropic.js';
+import * as openai from '../adapters/openai.js';
 import {
   BLOCK,
   MEDIA_SOURCE,
@@ -52,6 +53,8 @@ const find = (list, name) => {
   assert.ok(found, `fixture ${name} is missing`);
   return found;
 };
+
+const openaiFixtures = loadFixtures('openai');
 
 /**
  * The canonical object as a plugin is supposed to read it: `raw` belongs to the
@@ -287,7 +290,7 @@ test('inclusive provider counters normalize onto one definition', () => {
   // What an OpenAI adapter computes: prompt_tokens 5000 with cached_tokens 4000
   // is 1000 billed at full rate, and completion_tokens already includes the
   // 300 reasoning tokens.
-  const openai = usage({
+  const openaiUsage = usage({
     inputTokens: 5000 - 4000,
     outputTokens: 800,
     cacheReadTokens: 4000,
@@ -307,8 +310,8 @@ test('inclusive provider counters normalize onto one definition', () => {
     totalTokens: 5800,
   });
 
-  assert.deepEqual(openai, gemini, 'the same turn costs the same number on both providers');
-  assert.equal(openai.cacheWriteTokens, null, 'implicit caching reports no write; that is not a zero');
+  assert.deepEqual(openaiUsage, gemini, 'the same turn costs the same number on both providers');
+  assert.equal(openaiUsage.cacheWriteTokens, null, 'implicit caching reports no write; that is not a zero');
 });
 
 test('constrained output is one field, not three spellings', () => {
@@ -317,4 +320,194 @@ test('constrained output is one field, not three spellings', () => {
   // OpenAI `response_format.json_schema.schema`; Gemini `responseSchema`
   // alongside `responseMimeType: application/json`.
   assert.equal(cached.params.format.schema.properties.summary.type, 'string');
+});
+
+// ---------------------------------------------------------------------------
+// 3. The OpenAI column, now with evidence.
+//
+// Everything above was written against the OpenAI *column of the table* —
+// hand-derived, or exercised only through the Anthropic adapter. adapters/
+// openai.js now exists, so every claim the table makes about OpenAI is
+// re-asserted here driven through the real adapter over the real OpenAI
+// fixture corpus, with `raw` stripped the same way. Where building the
+// adapter found the table wrong, the correction is recorded in
+// NEUTRALITY.md's "corrections found building the adapter" section, not
+// silently fixed here.
+// ---------------------------------------------------------------------------
+
+const openaiSystemBlocks = withoutRaw(openai.requestToCanonical(find(openaiFixtures.requests, 'request-system-blocks').body));
+const openaiToolsMultiCall = withoutRaw(openai.requestToCanonical(find(openaiFixtures.requests, 'request-tools-multi-call').body));
+const openaiToolCallsResponse = withoutRaw(openai.responseToCanonical(find(openaiFixtures.responses, 'response-tool-calls').body));
+
+test('[openai] system-prompt placement survives without raw', () => {
+  // A leading system/developer message becomes request.system, exactly like
+  // Anthropic's top-level field — the same row in Table A, driven through the
+  // real adapter instead of asserted by hand.
+  assert.deepEqual(
+    openaiSystemBlocks.system.map((block) => block.text),
+    ['Answer in the style of a terse assistant.'],
+  );
+  assert.equal(openaiSystemBlocks.userId, 'user_xyz', '`user` is the OpenAI spelling of request.userId');
+  assert.equal(openaiSystemBlocks.params.maxOutputTokens, 4096, '`max_completion_tokens`');
+  assert.equal(openaiSystemBlocks.params.temperature, 0.7);
+  // The mid-thread developer message in this fixture is the row ROLE.SYSTEM
+  // exists for: it must not be folded into request.system or read as a user
+  // turn.
+  const systemRoles = openaiSystemBlocks.messages.filter((m) => m.role === ROLE.SYSTEM);
+  assert.equal(systemRoles.length, 1);
+  assert.equal(systemRoles[0].content[0].text, 'Remember: no more than two sentences.');
+});
+
+test('[openai] reasoning_effort is an ordinal, never a token budget', () => {
+  // Table A states this cell; the fixture actually carries reasoning_effort,
+  // and the real adapter is what proves budgetTokens stays null rather than
+  // being invented.
+  assert.deepEqual(openaiSystemBlocks.params.reasoning, {
+    enabled: true,
+    effort: REASONING_EFFORT.MEDIUM,
+    budgetTokens: null,
+  });
+});
+
+test('[openai] tool definitions and the choice over them survive without raw', () => {
+  const [readFile, runTests] = openaiToolsMultiCall.tools;
+  assert.equal(readFile.name, 'read_file');
+  assert.equal(readFile.description, 'Read a file from disk.');
+  assert.equal(readFile.parameters.required[0], 'path');
+  assert.equal(runTests.kind, TOOL_KIND.FUNCTION);
+
+  assert.equal(openaiToolsMultiCall.toolChoice.mode, TOOL_CHOICE.AUTO);
+  // parallel_tool_calls is request-level on the wire; canonical's home for it
+  // is toolChoice.allowParallel; see "corrections found building the
+  // adapter" in NEUTRALITY.md — the table's tool-choice row did not spell out
+  // that this requires synthesizing a toolChoice object when tool_choice
+  // itself is absent.
+  assert.equal(openaiToolsMultiCall.toolChoice.allowParallel, true);
+});
+
+test('[openai] tool calls and results correlate, and a `tool` role message is not a canonical role', () => {
+  const [call1, call2] = openaiToolsMultiCall.messages[1].content;
+  const [resultMsg1, resultMsg2] = [openaiToolsMultiCall.messages[2], openaiToolsMultiCall.messages[3]];
+
+  // The row the table states plainly ("{role:"tool", tool_call_id}" ->
+  // ToolResultBlock.callId) undersells what actually has to happen: a `tool`
+  // message is not a message-shaped fact in canonical at all. It becomes a
+  // ROLE.USER message wrapping one toolResultBlock — the correction recorded
+  // in NEUTRALITY.md.
+  assert.equal(resultMsg1.role, ROLE.USER);
+  const [result1] = resultMsg1.content;
+  assert.equal(result1.type, BLOCK.TOOL_RESULT);
+  assert.equal(result1.callId, call1.id);
+  assert.equal(result1.name, 'read_file', 'resolved from the call list, the same derivation Anthropic needs');
+
+  const [result2] = resultMsg2.content;
+  assert.equal(result2.callId, call2.id);
+  assert.equal(result2.name, 'run_tests');
+});
+
+test('[openai] tool call arguments are a JSON string on the wire, an object in canonical', () => {
+  const [, call1] = openaiToolCallsResponse.content;
+  assert.equal(call1.type, BLOCK.TOOL_CALL);
+  assert.deepEqual(call1.input, { path: 'index.js' }, 'parsed once, not re-parsed by every plugin');
+});
+
+test('[openai] a provider-executed tool call has no schema', () => {
+  const unmodeled = withoutRaw(openai.requestToCanonical(find(openaiFixtures.requests, 'request-unmodeled').body));
+  const [, assistantMsg] = unmodeled.messages;
+  const [call] = assistantMsg.content;
+  assert.equal(call.kind, TOOL_KIND.PROVIDER, 'a tool_calls[].type other than "function" is provider-executed');
+});
+
+test('[openai] an image_url data: URL and an http(s) URL are two different media sources', () => {
+  const image = withoutRaw(openai.requestToCanonical(find(openaiFixtures.requests, 'request-image').body));
+  const [base64, url] = image.messages[0].content;
+  assert.equal(base64.source.kind, MEDIA_SOURCE.BASE64);
+  assert.equal(base64.source.mediaType, 'image/png');
+  assert.equal(url.source.kind, MEDIA_SOURCE.URL);
+});
+
+test('[openai] stop reasons and usage survive without raw', () => {
+  assert.equal(openaiToolCallsResponse.stopReason, STOP_REASON.TOOL_CALL, '`finish_reason: "tool_calls"`');
+
+  // The derivations Table C states: inputTokens excludes the cached share of
+  // prompt_tokens, outputTokens already includes reasoning, cacheWriteTokens
+  // is null because implicit caching writes nothing billable.
+  assert.deepEqual(openaiToolCallsResponse.usage, {
+    inputTokens: 1204 - 1024,
+    outputTokens: 96,
+    cacheReadTokens: 1024,
+    cacheWriteTokens: null,
+    reasoningTokens: 0,
+    totalTokens: 1300,
+  });
+});
+
+test('[openai] streaming granularity never reaches the model', () => {
+  // OpenAI frames a stream as choice deltas with tool-call argument fragments
+  // keyed by index and no block lifecycle at all — the least structured of
+  // the three framings — and the accumulator still converges on the same
+  // canonical object as the non-streamed response.
+  const streamed = find(openaiFixtures.streams, 'stream-tool-call');
+  const canonical = openai.streamBytesToCanonical(streamed.sse);
+  assertCanonicalShape(canonical, 'response', 'openai/stream-tool-call');
+  assert.deepEqual(
+    withoutRaw(canonical),
+    withoutRaw(openai.responseToCanonical(streamed.expected)),
+    'streamed and unstreamed are the same object',
+  );
+});
+
+test('[openai] a stream the client did not opt into usage for yields null counters, not zeros', () => {
+  const streamed = find(openaiFixtures.streams, 'stream-no-usage');
+  const canonical = openai.streamBytesToCanonical(streamed.sse);
+  assert.equal(canonical.usage, null, 'invariant 6: a missing provider field is null, never a computed guess or zero');
+});
+
+test('[openai] a content_filter finish_reason is not a stop, per the stop-reason table', () => {
+  const filtered = openai.responseToCanonical(find(openaiFixtures.responses, 'response-content-filter').body);
+  assert.equal(filtered.stopReason, STOP_REASON.CONTENT_FILTER);
+});
+
+// ---------------------------------------------------------------------------
+// 4. Ledger comparability across providers.
+//
+// The measurement every future transform is judged against only means
+// anything if the same conversation costs comparable numbers regardless of
+// which provider served it. The token counts differ — tokenizers differ — but
+// the *definitions* must line up: inputTokens excludes cache reads on both
+// sides, outputTokens includes reasoning on both sides, and a provider that
+// does not report a number is null on both sides rather than one silently
+// reporting zero.
+// ---------------------------------------------------------------------------
+
+test('the same conversation, run through both adapters, produces usage under the same definitions', () => {
+  // Anthropic: input_tokens already excludes cache reads; no reasoning
+  // subtotal is reported.
+  const anthropicUsage = responseToCanonical(find(responses, 'response-tool-calls').body).usage;
+  // OpenAI: prompt_tokens is inclusive of the cached share, so inputTokens is
+  // derived by subtraction; completion_tokens is already inclusive of
+  // reasoning, and the reasoning share is broken out separately.
+  const openaiUsage = openai.responseToCanonical(find(openaiFixtures.responses, 'response-tool-calls').body).usage;
+
+  for (const [field, side] of [
+    ['inputTokens', anthropicUsage],
+    ['outputTokens', anthropicUsage],
+    ['inputTokens', openaiUsage],
+    ['outputTokens', openaiUsage],
+  ]) {
+    assert.equal(typeof side[field], 'number', `${field} must be a reported number, not null, for this assertion to mean anything`);
+  }
+
+  // Both adapters agree cacheWriteTokens is either a real reported number or
+  // null — never a zero standing in for "the provider didn't say."
+  assert.equal(anthropicUsage.cacheWriteTokens, 812, 'Anthropic reported an explicit cache write');
+  assert.equal(openaiUsage.cacheWriteTokens, null, 'OpenAI has no such concept; null, not 0');
+
+  // The comparable claim: inputTokens on both sides is prompt cost with the
+  // cached share removed, and outputTokens on both sides already has any
+  // reasoning folded in. Neither adapter leaks its provider's raw inclusive
+  // counter into inputTokens.
+  assert.ok(anthropicUsage.inputTokens < 1204 + 20480, 'Anthropic input excludes its own cache read');
+  assert.ok(openaiUsage.inputTokens < 1204, 'OpenAI input excludes its own cached_tokens share');
+  assert.equal(openaiUsage.outputTokens, 96, 'reasoning_tokens: 0 in this fixture, but folded in by definition either way');
 });

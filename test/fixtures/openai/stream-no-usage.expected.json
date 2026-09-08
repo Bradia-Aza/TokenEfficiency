@@ -1,0 +1,12 @@
+{
+  "id": "chatcmpl-03NoUsage",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "No usage here." },
+      "finish_reason": "stop"
+    }
+  ]
+}

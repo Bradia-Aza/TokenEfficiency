@@ -1,0 +1,20 @@
+{
+  "model": "gpt-5",
+  "max_completion_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "image_url",
+          "image_url": { "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" }
+        },
+        {
+          "type": "image_url",
+          "image_url": { "url": "https://example.test/diagram.png" }
+        },
+        { "type": "text", "text": "What do these two show?" }
+      ]
+    }
+  ]
+}

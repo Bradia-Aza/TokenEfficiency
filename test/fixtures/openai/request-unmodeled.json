@@ -1,0 +1,21 @@
+{
+  "model": "gpt-5",
+  "max_completion_tokens": 2048,
+  "seed": 42,
+  "logprobs": true,
+  "user": "user_xyz",
+  "messages": [
+    { "role": "user", "content": "Summarize this." },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_websearch_01",
+          "type": "web_search",
+          "function": { "name": "web_search", "arguments": "{\"query\": \"q3 revenue\"}" }
+        }
+      ]
+    }
+  ]
+}

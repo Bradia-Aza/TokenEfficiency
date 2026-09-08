@@ -1,0 +1,28 @@
+{
+  "id": "chatcmpl-02StreamTool",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Reading it.",
+        "tool_calls": [
+          {
+            "id": "call_01Stream",
+            "type": "function",
+            "function": { "name": "read_file", "arguments": "{\"path\": \"index.js\"}" }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1204,
+    "completion_tokens": 96,
+    "total_tokens": 1300,
+    "prompt_tokens_details": { "cached_tokens": 1024 }
+  }
+}

@@ -17,7 +17,7 @@ import {
   TOOL_KIND,
 } from '../canonical/index.js';
 
-const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const FIXTURE_ROOT = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -60,18 +60,62 @@ export function assertSemanticEqual(actual, expected, message) {
   assert.deepEqual(normalize(actual), normalize(expected), message);
 }
 
+/**
+ * Build an adapter's own semantic-equality checker. Invariant 8 (see
+ * OPENAI_ADAPTER_PLAN.md): each adapter owns its own equivalence list, because
+ * a shared one is how one provider's sloppy spellings become every provider's
+ * allowed sloppiness. `stringSugarFields` are fields where a bare string is
+ * shorthand for a single text part; `falseIsAbsentFields` are fields whose
+ * absence means exactly `false`.
+ */
+export function makeNormalizer({ stringSugarFields = [], falseIsAbsentFields = [] } = {}) {
+  const sugar = new Set(stringSugarFields);
+  const absentFalse = new Set(falseIsAbsentFields);
+
+  function normalizeWith(value) {
+    if (Array.isArray(value)) return value.map(normalizeWith);
+    if (!isObject(value)) return value;
+    const out = {};
+    for (const [key, raw] of Object.entries(value)) {
+      if (raw === null || raw === undefined) continue;
+      if (raw === false && absentFalse.has(key)) continue;
+      if (typeof raw === 'string' && sugar.has(key)) {
+        out[key] = [{ type: 'text', text: raw }];
+        continue;
+      }
+      out[key] = normalizeWith(raw);
+    }
+    return out;
+  }
+
+  return {
+    normalize: normalizeWith,
+    assertSemanticEqual(actual, expected, message) {
+      assert.deepEqual(normalizeWith(actual), normalizeWith(expected), message);
+    },
+  };
+}
+
 // --- loading ----------------------------------------------------------------
 
-const readJson = (file) => JSON.parse(readFileSync(join(FIXTURE_DIR, file), 'utf8'));
-const readText = (file) => readFileSync(join(FIXTURE_DIR, file), 'utf8');
+const readJson = (dir, file) => JSON.parse(readFileSync(join(dir, file), 'utf8'));
+const readText = (dir, file) => readFileSync(join(dir, file), 'utf8');
 
 /**
  * The corpus, grouped by kind. A stream fixture's `.expected.json` is the
  * non-streamed message the stream describes; a stream with no expectation (one
  * that fails partway) is asserted directly by its own test.
+ *
+ * Each adapter owns its own corpus directory — `fixtures/` for Anthropic,
+ * `fixtures/openai/` for OpenAI — so one provider's fixtures are never fed
+ * through another provider's adapter. `subdir` is relative to `fixtures/`.
  */
-export function loadFixtures() {
-  const files = readdirSync(FIXTURE_DIR).sort();
+export function loadFixtures(subdir = '.') {
+  const dir = join(FIXTURE_ROOT, subdir);
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
   const requests = [];
   const responses = [];
   const streams = [];
@@ -79,16 +123,16 @@ export function loadFixtures() {
   for (const file of files) {
     if (file.endsWith('.expected.json')) continue;
     if (file.startsWith('request-') && file.endsWith('.json')) {
-      requests.push({ name: file.replace(/\.json$/, ''), body: readJson(file) });
+      requests.push({ name: file.replace(/\.json$/, ''), body: readJson(dir, file) });
     } else if (file.startsWith('response-') && file.endsWith('.json')) {
-      responses.push({ name: file.replace(/\.json$/, ''), body: readJson(file) });
+      responses.push({ name: file.replace(/\.json$/, ''), body: readJson(dir, file) });
     } else if (file.endsWith('.sse')) {
       const name = file.replace(/\.sse$/, '');
       const expectedFile = `${name}.expected.json`;
       streams.push({
         name,
-        sse: readText(file),
-        expected: files.includes(expectedFile) ? readJson(expectedFile) : null,
+        sse: readText(dir, file),
+        expected: files.includes(expectedFile) ? readJson(dir, expectedFile) : null,
       });
     }
   }
@@ -102,12 +146,16 @@ export function loadFixtures() {
 /**
  * The core claim of Phase 2: `fromCanonical(toCanonical(x))` means the same
  * thing as `x`, and what a plugin sees along the way is frozen.
+ *
+ * `assertEqual` defaults to Anthropic's own semantic-equality list; a second
+ * adapter passes its own (see `makeNormalizer`) rather than sharing it —
+ * invariant 8.
  */
-export function assertRoundTrip({ name, body, kind, toCanonical, fromCanonical }) {
+export function assertRoundTrip({ name, body, kind, toCanonical, fromCanonical, assertEqual = assertSemanticEqual }) {
   const canonical = toCanonical(body);
   assertDeeplyFrozen(canonical, name);
   if (kind !== undefined) assertCanonicalShape(canonical, kind, name);
-  assertSemanticEqual(fromCanonical(canonical), body, `${name}: round trip lost or changed a field`);
+  assertEqual(fromCanonical(canonical), body, `${name}: round trip lost or changed a field`);
   return canonical;
 }
 

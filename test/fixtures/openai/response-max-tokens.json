@@ -1,0 +1,13 @@
+{
+  "id": "chatcmpl-04Truncated",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "The first step is to enumerate every" },
+      "finish_reason": "length"
+    }
+  ],
+  "usage": { "prompt_tokens": 30, "completion_tokens": 8, "total_tokens": 38 }
+}

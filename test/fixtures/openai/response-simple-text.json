@@ -1,0 +1,13 @@
+{
+  "id": "chatcmpl-01SimpleText",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Paris." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 20, "completion_tokens": 3, "total_tokens": 23 }
+}

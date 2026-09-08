@@ -1,0 +1,20 @@
+{
+  "model": "gpt-5",
+  "max_completion_tokens": 16000,
+  "reasoning_effort": "high",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "Read a file from disk.",
+        "parameters": {
+          "type": "object",
+          "properties": { "path": { "type": "string" } }
+        }
+      }
+    }
+  ],
+  "tool_choice": { "type": "function", "function": { "name": "read_file" } },
+  "messages": [{ "role": "user", "content": "Prove the round-trip is lossless." }]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "chatcmpl-05ContentFilter",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "" },
+      "finish_reason": "content_filter"
+    }
+  ],
+  "usage": { "prompt_tokens": 88, "completion_tokens": 0, "total_tokens": 88 }
+}

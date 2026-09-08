@@ -1,0 +1,19 @@
+{
+  "id": "chatcmpl-03Reasoning",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "It holds for every block type in the corpus." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 512,
+    "completion_tokens": 320,
+    "total_tokens": 832,
+    "prompt_tokens_details": { "cached_tokens": 0 },
+    "completion_tokens_details": { "reasoning_tokens": 256 }
+  }
+}

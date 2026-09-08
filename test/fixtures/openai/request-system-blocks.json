@@ -1,0 +1,16 @@
+{
+  "model": "gpt-5",
+  "max_completion_tokens": 4096,
+  "temperature": 0.7,
+  "top_p": 0.95,
+  "stop": ["</done>"],
+  "user": "user_xyz",
+  "reasoning_effort": "medium",
+  "messages": [
+    { "role": "developer", "content": "Answer in the style of a terse assistant." },
+    { "role": "user", "content": "Summarize the attached spec." },
+    { "role": "assistant", "content": "Sure — go ahead and share it." },
+    { "role": "developer", "content": "Remember: no more than two sentences." },
+    { "role": "user", "content": "Here it is." }
+  ]
+}

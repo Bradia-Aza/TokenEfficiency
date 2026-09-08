@@ -10,6 +10,7 @@
 // else changes, and that claim is the point of the registry.
 
 import { adapter as anthropicAdapter } from '../adapters/anthropic.js';
+import { adapter as openaiAdapter } from '../adapters/openai.js';
 
 /**
  * @typedef {object} ProviderEntry
@@ -29,9 +30,26 @@ import { adapter as anthropicAdapter } from '../adapters/anthropic.js';
  * and defaulting to "modeled" would make a new upstream endpoint a parse error
  * in the observer instead of bytes moved unchanged.
  *
+ * The OpenAI entry is listed before Anthropic's, even though it is the newer
+ * one: Anthropic's `port: null` matches *any* port, so if it came first it
+ * would shadow every other entry regardless of which port a request actually
+ * reached — a port-agnostic catch-all has to be last, not first. A registry
+ * with more than one port-specific entry has no such ordering constraint
+ * between them; only a `port: null` entry needs to sort after everything else.
+ *
  * @type {readonly ProviderEntry[]}
  */
 export const PROVIDERS = Object.freeze([
+  Object.freeze({
+    name: openaiAdapter.name,
+    adapter: openaiAdapter,
+    upstream: 'https://api.openai.com',
+    // A second port is cleaner than a path prefix, since both providers use
+    // /v1/ and Chat Completions shares its path with nothing Anthropic serves.
+    port: 8788,
+    pathPrefix: '/',
+    modeledPaths: Object.freeze(['/v1/chat/completions']),
+  }),
   Object.freeze({
     name: anthropicAdapter.name,
     adapter: anthropicAdapter,

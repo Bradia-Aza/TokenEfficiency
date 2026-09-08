@@ -1,0 +1,34 @@
+{
+  "id": "chatcmpl-02ToolCalls",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Reading both files.",
+        "tool_calls": [
+          {
+            "id": "call_01A",
+            "type": "function",
+            "function": { "name": "read_file", "arguments": "{\"path\": \"index.js\"}" }
+          },
+          {
+            "id": "call_01B",
+            "type": "function",
+            "function": { "name": "read_file", "arguments": "{\"path\": \"config/index.js\"}" }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1204,
+    "completion_tokens": 96,
+    "total_tokens": 1300,
+    "prompt_tokens_details": { "cached_tokens": 1024 },
+    "completion_tokens_details": { "reasoning_tokens": 0 }
+  }
+}

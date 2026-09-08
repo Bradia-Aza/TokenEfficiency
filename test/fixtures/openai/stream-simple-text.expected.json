@@ -1,0 +1,18 @@
+{
+  "id": "chatcmpl-01StreamText",
+  "object": "chat.completion",
+  "model": "gpt-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Hello, world." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 42,
+    "completion_tokens": 7,
+    "total_tokens": 49,
+    "prompt_tokens_details": { "cached_tokens": 0 }
+  }
+}
